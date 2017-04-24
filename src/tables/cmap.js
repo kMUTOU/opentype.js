@@ -19,7 +19,7 @@ function parseCmapTableFormat12(cmap, p) {
 
     var groupCount;
     cmap.groupCount = groupCount = p.parseULong();
-    cmap.glyphIndexMap = {};
+    var glyphIndexMap = {};
 
     for (i = 0; i < groupCount; i += 1) {
         var startCharCode = p.parseULong();
@@ -27,10 +27,11 @@ function parseCmapTableFormat12(cmap, p) {
         var startGlyphId = p.parseULong();
 
         for (var c = startCharCode; c <= endCharCode; c += 1) {
-            cmap.glyphIndexMap[c] = startGlyphId;
+            glyphIndexMap = cmap.glyphIndexMap[c] = startGlyphId;
             startGlyphId++;
         }
     }
+    return glyphIndexMap;
 }
 
 function parseCmapTableFormat4(cmap, p, data, start, offset) {
@@ -48,7 +49,7 @@ function parseCmapTableFormat4(cmap, p, data, start, offset) {
     p.skip('uShort', 3);
 
     // The "unrolled" mapping from character codes to glyph indices.
-    cmap.glyphIndexMap = {};
+    var glyphIndexMap = {};
     var endCountParser = new parse.Parser(data, start + offset + 14);
     var startCountParser = new parse.Parser(data, start + offset + 16 + segCount * 2);
     var idDeltaParser = new parse.Parser(data, start + offset + 16 + segCount * 4);
@@ -79,9 +80,78 @@ function parseCmapTableFormat4(cmap, p, data, start, offset) {
                 glyphIndex = (c + idDelta) & 0xFFFF;
             }
 
-            cmap.glyphIndexMap[c] = glyphIndex;
+            glyphIndexMap[c] = cmap.glyphIndexMap[c] = glyphIndex;
         }
     }
+    return glyphIndexMap;
+}
+
+function parseCmapTableFormat14(cmap, p) {
+    var i;
+    var j;
+    var k;
+
+    // Length in bytes of the sub-tables.
+    cmap.uvsLength = p.parseULong();
+
+    // Number of variation selector records in this sub-tables.
+    var numVarSelectorRecords;
+    cmap.numVarSelectorRecords = numVarSelectorRecords = p.parseULong();
+
+    var uvsGlyphMap = cmap.uvsGlyphMap = {};
+
+    var uvsTables = [];
+    for (i = 0; i < numVarSelectorRecords; i += 1) {
+        var varSelector = p.parseUint24();	// uint24
+        var defaultUVSOffset = p.parseULong();  // Offset32
+        var nonDefaultUVSOffset = p.parseULong(); // Offset32
+
+        uvsTables.push({
+            varSelector: varSelector,
+            defaultUVSOffset: defaultUVSOffset,
+            nonDefaultUVSOffset: nonDefaultUVSOffset
+        });
+    }
+
+    uvsTables.forEach(function(uvsTable) {
+        uvsGlyphMap[uvsTable.varSelector] = {};
+
+        /* Default UVS Table */
+        if (uvsTable.defaultUVSOffset !== 0)
+        {
+            // UnicodeRane Array
+            // numUnicodeValueRanges: uint32
+            var numUnicodeValueRanges = p.parseULong();
+
+            for (j = 0; j < numUnicodeValueRanges; j += 1) {
+                // startUnicodeVelue: uint24
+                var startUnicodeValue = p.parseUint24();
+                // additionalCount: uint8
+                var additionalCount = p.parseByte();
+
+                for (k = 0; k < additionalCount + 1; k += 1) {
+                    uvsGlyphMap[uvsTable.varSelector][startUnicodeValue += k] = 'Default';
+                }
+            }
+        }
+        /* Non-Default UVS Table */
+        if (uvsTable.nonDefaultUVSOffset !== 0)
+        {
+            // numUVSMappings: uint32
+            var numUVSMappings = p.parseULong();
+            // UVSMapping
+            for (j = 0; j < numUVSMappings; j += 1) {
+                // startUnicodeVelue: uint24
+                var unicodeValue = p.parseUint24();
+                // additionalCount: uint8
+                var glyphID = p.parseUShort();
+
+                uvsGlyphMap[uvsTable.varSelector][unicodeValue] = glyphID;
+            }
+        }
+    });
+
+    return uvsGlyphMap;
 }
 
 // Parse the `cmap` table. This table stores the mappings from characters to glyphs.
@@ -90,19 +160,61 @@ function parseCmapTableFormat4(cmap, p, data, start, offset) {
 function parseCmapTable(data, start) {
     var i;
     var cmap = {};
+    var offset = -1;
+    var uvsOffset = -1;
+    var p;
+    var format;
+
     cmap.version = parse.getUShort(data, start);
     check.argument(cmap.version === 0, 'cmap table version should be 0.');
 
     // The cmap table can contain many sub-tables, each with their own format.
     // We're only interested in a "platform 3" table. This is a Windows format.
     cmap.numTables = parse.getUShort(data, start + 2);
-    var offset = -1;
+    cmap.tables = [];
+    cmap.glyphIndexMap = {};
+
     for (i = cmap.numTables - 1; i >= 0; i -= 1) {
         var platformId = parse.getUShort(data, start + 4 + (i * 8));
         var encodingId = parse.getUShort(data, start + 4 + (i * 8) + 2);
+
+        // cmap format 14
+        if (platformId === 0 && encodingId === 5) {
+            uvsOffset = parse.getULong(data, start + 4 + (i * 8) + 4);
+            p = new parse.Parser(data, start + uvsOffset);
+            format = p.parseUShort();
+            if (format === 14) {
+                cmap.tables.push({
+                    format: format,
+                    platformId: platformId,
+                    encodingId: encodingId,
+                    uvsGlyphMap: parseCmapTableFormat14(cmap, p)
+                });
+
+            }
+        }
+
         if (platformId === 3 && (encodingId === 0 || encodingId === 1 || encodingId === 10)) {
             offset = parse.getULong(data, start + 4 + (i * 8) + 4);
-            break;
+            p = new parse.Parser(data, start + offset);
+            format = p.parseUShort();
+            if (format === 12) {
+                cmap.tables.push({
+                    format: format,
+                    platformId: platformId,
+                    encodingId: encodingId,
+                    glyphIndexMap: parseCmapTableFormat12(cmap, p)
+                });
+            } else if (format === 4) {
+                cmap.tables.push({
+                    format: format,
+                    platformId: platformId,
+                    encodingId: encodingId,
+                    glyphIndexMap: parseCmapTableFormat4(cmap, p, data, start, offset)
+                });
+            } else {
+                throw new Error('Only format 4 and 12 cmap tables are supported.');
+            }
         }
     }
 
@@ -110,17 +222,6 @@ function parseCmapTable(data, start) {
         // There is no cmap table in the font that we support, so return null.
         // This font will be marked as unsupported.
         return null;
-    }
-
-    var p = new parse.Parser(data, start + offset);
-    cmap.format = p.parseUShort();
-
-    if (cmap.format === 12) {
-        parseCmapTableFormat12(cmap, p);
-    } else if (cmap.format === 4) {
-        parseCmapTableFormat4(cmap, p, data, start, offset);
-    } else {
-        throw new Error('Only format 4 and 12 cmap tables are supported.');
     }
 
     return cmap;

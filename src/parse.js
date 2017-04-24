@@ -25,6 +25,12 @@ exports.getShort = function(dataView, offset) {
     return dataView.getInt16(offset, false);
 };
 
+// Retrieve a unsigned 24-bit integer from the DataView.
+// The value is stored in big endian.
+exports.getUint24 = function(dataView, offset) {
+    return (dataView.getUint16(offset, false) << 8) + dataView.getUint16(offset + 2, false);
+};
+
 // Retrieve an unsigned 32-bit long from the DataView.
 // The value is stored in big endian.
 exports.getULong = function(dataView, offset) {
@@ -86,6 +92,7 @@ var typeOffsets = {
     byte: 1,
     uShort: 2,
     short: 2,
+    uInt24: 3,
     uLong: 4,
     fixed: 4,
     longDateTime: 8,
@@ -127,6 +134,13 @@ Parser.prototype.parseOffset16 = Parser.prototype.parseUShort;
 Parser.prototype.parseShort = function() {
     var v = this.data.getInt16(this.offset + this.relativeOffset);
     this.relativeOffset += 2;
+    return v;
+};
+
+Parser.prototype.parseUint24 = function() {
+    var v = (this.data.getUint16(this.offset + this.relativeOffset) << 8) +
+    this.data.getUint8(this.offset + 2 + this.relativeOffset);
+    this.relativeOffset += 3;
     return v;
 };
 
