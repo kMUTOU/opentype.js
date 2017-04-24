@@ -166,7 +166,22 @@ function CmapEncoding(cmap) {
  * @return {number} The glyph index.
  */
 CmapEncoding.prototype.charToGlyphIndex = function(c) {
-    return this.cmap.glyphIndexMap[c.charCodeAt(0)] || 0;
+    return this.cmap.glyphIndexMap[c.codePointAt(0)] || 0;
+};
+
+/**
+ * @param  {string} bc - the base character code point
+ * @param  {string} vs - the variation selector character code point
+ * @return {number} The glyph index.
+ */
+CmapEncoding.prototype.uvsToGlyphIndex = function(bc, vs) {
+    if (this.cmap.uvsGlyphMap[vs.codePointAt(0)] === undefined ||
+        this.cmap.uvsGlyphMap[vs.codePointAt(0)][bc.codePointAt(0)] === undefined)
+        return this.charToGlyphIndex(bc);
+    else if (this.cmap.uvsGlyphMap[vs.codePointAt(0)][bc.codePointAt(0)] === 'Default')
+        return this.charToGlyphIndex(bc);
+    else
+        return this.cmap.uvsGlyphMap[vs.codePointAt(0)][bc.codePointAt(0)];
 };
 
 /**

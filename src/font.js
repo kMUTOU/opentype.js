@@ -141,6 +141,16 @@ Font.prototype.charToGlyph = function(c) {
 };
 
 /**
+ * Convert the given unicode variation seqeunces to a single glyph index.
+ * @param  {Number}
+ * @param  {Number}
+ * @return {Number}
+ */
+Font.prototype.uvsToGlyphIndex = function(c, vs) {
+    return this.encoding.uvsToGlyphIndex(c, vs);
+};
+
+/**
  * Convert the given text to a list of Glyph objects.
  * Note that there is no strict one-to-one mapping between characters and
  * glyphs, so the list of returned glyphs can be larger or smaller than the
@@ -152,11 +162,29 @@ Font.prototype.charToGlyph = function(c) {
 Font.prototype.stringToGlyphs = function(s, options) {
     options = options || this.defaultRenderOptions;
     var i;
+    var prev;
     // Get glyph indexes
     var indexes = [];
+
     for (i = 0; i < s.length; i += 1) {
         var c = s[i];
-        indexes.push(this.charToGlyphIndex(c));
+        if (c.charCodeAt(0) > 0xD800 && c.charCodeAt(0) < 0xDBFF)
+            c += s[++i];
+
+        if (
+            // MONGOLIAN FREE VARIATION SELECTOR FVS1 - FVS2
+            (c.codePointAt(0) >= 0x180B && c.codePointAt(0) <= 0x180D) ||
+            // VARIATION SELECTORS VS1 - VS16
+            (c.codePointAt(0) >= 0xFE00 && c.codePointAt(0) <= 0xFE0F) ||
+            // VARIATION SELECTORS SUPPLEMENT VS17 - VS256
+            (c.codePointAt(0) >= 0xE0100 && c.codePointAt(0) <= 0xE01EF)
+        ) {
+            indexes.pop();
+            indexes.push(this.uvsToGlyphIndex(prev, c));
+        } else {
+            indexes.push(this.charToGlyphIndex(c));
+        }
+        prev = c;
     }
     var length = indexes.length;
 
@@ -164,6 +192,8 @@ Font.prototype.stringToGlyphs = function(s, options) {
     if (options.features) {
         var script = options.script || this.substitution.getDefaultScriptName();
         var manyToOne = [];
+        // add ccmp
+        manyToOne = manyToOne.concat(this.substitution.getLigatures('ccmp', script, options.language));
         if (options.features.liga) manyToOne = manyToOne.concat(this.substitution.getFeature('liga', script, options.language));
         if (options.features.rlig) manyToOne = manyToOne.concat(this.substitution.getFeature('rlig', script, options.language));
         for (i = 0; i < length; i += 1) {
